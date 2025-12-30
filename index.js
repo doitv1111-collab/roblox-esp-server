@@ -5,7 +5,9 @@ const fs = require('fs');
 
 // --- CẤU HÌNH ---
 // LƯU Ý: Nếu dùng Glitch, Token nên để trong file .env (nhưng để test thì để đây cũng được)
-const TOKEN = process.env.DISCORD_TOKEN || 'MTQ1NTIwNjA3MTQxMjE5NTMyOA.Gp8Tnu.Fml2R1B-zEvIdQMdtL_Dk5NPADWlH1LBjWXx2c'; 
+const TOKEN = process.env.DISCORD_TOKEN || 'MTQ1NTIwNjA3MTQxMjE5NTMyOA.GXg5X8.8HtSlygEUyginGCOMRb8jRcNqtY5TRUbzBZpRU
+
+'; 
 const CHANNEL_ID = '1451566877833957510'; // Kênh thông báo
 const LOG_CHANNEL_ID = '1438465474177536020'; // Kênh log online
 
