@@ -162,14 +162,22 @@ client.on('messageCreate', async (message) => {
         const rName = args[1].toLowerCase();
         const dId = args[2] || message.author.id;
         
-        // Update local
+        // Update local trước để dùng ngay
         userMap[rName] = dId;
-        message.reply(`⏳ Đang lưu **${args[1]}** -> <@${dId}> lên GitHub...`);
+        
+        // Gửi tin nhắn chờ (và giữ lại msg object để edit sau)
+        const waitingMsg = await message.reply(`⏳ Đang lưu **${args[1]}** -> <@${dId}>...`);
         
         // Update GitHub
         const success = await saveUsersToGithub(userMap);
-        if (success) message.channel.send('✅ Đã lưu vĩnh viễn vào Database!');
-        else message.channel.send('❌ Lỗi lưu GitHub (Kiểm tra Token).');
+        
+        if (success) {
+            // Sửa lại tin nhắn cũ thành ✅
+            await waitingMsg.edit(`✅ Đã liên kết: **${args[1]}** -> <@${dId}> (Lưu GitHub OK)`);
+        } else {
+            // Sửa lại tin nhắn cũ thành ❌
+            await waitingMsg.edit(`⚠️ Đã liên kết tạm thời (Lưu GitHub thất bại).`);
+        }
     }
     
     if (message.content.startsWith('!unlink')) {
