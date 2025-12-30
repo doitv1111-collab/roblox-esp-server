@@ -48,25 +48,39 @@ async function fetchUsersFromGithub() {
     }
 }
 
-// Hàm lưu dữ liệu lên GitHub
+// Hàm lưu dữ liệu lên GitHub (Cơ chế An toàn: Đọc mới nhất -> Gộp -> Lưu)
 async function saveUsersToGithub(newMap) {
     if (!GITHUB_TOKEN) return false;
     
     try {
         const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${FILE_PATH}`;
         
-        // 1. Lấy SHA hiện tại của file (bắt buộc để update)
+        // 1. Lấy dữ liệu VÀ SHA mới nhất từ GitHub (Thêm timestamp để chống cache)
         let currentSha = null;
+        let currentContent = {};
+        
         try {
-            const getRes = await axios.get(url, { headers: { Authorization: `token ${GITHUB_TOKEN}` } });
+            const getRes = await axios.get(url, { 
+                headers: { Authorization: `token ${GITHUB_TOKEN}` },
+                params: { t: Date.now() } // Chống cache
+            });
             currentSha = getRes.data.sha;
-        } catch (e) { /* File chưa tồn tại thì sha = null -> Tạo mới */ }
+            // Decode nội dung cũ để đảm bảo không bị mất dữ liệu của người khác
+            const decoded = Buffer.from(getRes.data.content, 'base64').toString('utf8');
+            currentContent = JSON.parse(decoded);
+        } catch (e) { /* File chưa tồn tại -> Tạo mới */ }
 
-        // 2. Upload nội dung mới
-        const contentBase64 = Buffer.from(JSON.stringify(newMap, null, 4)).toString('base64');
+        // 2. Gộp dữ liệu mới vào dữ liệu cũ (Merge)
+        const finalMap = { ...currentContent, ...newMap };
+        
+        // Cập nhật lại bộ nhớ local luôn
+        userMap = finalMap;
+
+        // 3. Upload nội dung mới
+        const contentBase64 = Buffer.from(JSON.stringify(finalMap, null, 4)).toString('base64');
         
         await axios.put(url, {
-            message: "🤖 Bot update users via !link",
+            message: "🤖 Bot update users via !link (Safe Mode)",
             content: contentBase64,
             sha: currentSha
         }, {
