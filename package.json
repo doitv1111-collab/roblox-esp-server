@@ -1,0 +1,15 @@
+{
+  "name": "discord-steal-bot",
+  "version": "1.0.0",
+  "description": "Bot thông báo cướp pet",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "body-parser": "^2.2.1",
+    "discord.js": "^14.14.1",
+    "express": "^5.2.1",
+    "localtunnel": "^2.0.2"
+  }
+}
