@@ -48,46 +48,31 @@ async function fetchUsersFromGithub() {
     }
 }
 
-// Hàm lưu dữ liệu lên GitHub (Cơ chế An toàn: Đọc mới nhất -> Gộp -> Lưu)
+// Hàm lưu dữ liệu lên GitHub (Ghi đè - Dùng sau khi đã Sync)
 async function saveUsersToGithub(newMap) {
     if (!GITHUB_TOKEN) return false;
-    
     try {
         const url = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/contents/${FILE_PATH}`;
         
-        // 1. Lấy dữ liệu VÀ SHA mới nhất từ GitHub (Thêm timestamp để chống cache)
+        // 1. Lấy SHA để update (Không gộp nữa, tin tưởng dữ liệu đầu vào)
         let currentSha = null;
-        let currentContent = {};
-        
         try {
             const getRes = await axios.get(url, { 
                 headers: { Authorization: `token ${GITHUB_TOKEN}` },
-                params: { t: Date.now() } // Chống cache
+                params: { t: Date.now() }
             });
             currentSha = getRes.data.sha;
-            // Decode nội dung cũ để đảm bảo không bị mất dữ liệu của người khác
-            const decoded = Buffer.from(getRes.data.content, 'base64').toString('utf8');
-            currentContent = JSON.parse(decoded);
-        } catch (e) { /* File chưa tồn tại -> Tạo mới */ }
+        } catch (e) { }
 
-        // 2. Gộp dữ liệu mới vào dữ liệu cũ (Merge)
-        const finalMap = { ...currentContent, ...newMap };
-        
-        // Cập nhật lại bộ nhớ local luôn
-        userMap = finalMap;
-
-        // 3. Upload nội dung mới
-        const contentBase64 = Buffer.from(JSON.stringify(finalMap, null, 4)).toString('base64');
-        
+        // 2. Upload nội dung
+        const contentBase64 = Buffer.from(JSON.stringify(newMap, null, 4)).toString('base64');
         await axios.put(url, {
-            message: "🤖 Bot update users via !link (Safe Mode)",
+            message: "🤖 Bot update users",
             content: contentBase64,
             sha: currentSha
         }, {
             headers: { Authorization: `token ${GITHUB_TOKEN}` }
         });
-        
-        console.log("💾 Đã lưu dữ liệu lên GitHub thành công!");
         return true;
     } catch (error) {
         console.error('❌ Lỗi lưu GitHub:', error.response?.data || error.message);
@@ -100,12 +85,13 @@ fetchUsersFromGithub();
 
 // --- API SERVER ---
 app.post('/api/heartbeat', async (req, res) => {
-    const { username } = req.body;
+    const { username, hasPet } = req.body;
     if (username) {
         if (!activeUsers[username]) await sendLog(username, 'online');
-        activeUsers[username] = Date.now();
+        activeUsers[username] = { ts: Date.now(), hasPet: !!hasPet };
         const onlineUsers = Object.keys(activeUsers).filter(u => u !== username);
-        res.json({ users: onlineUsers });
+        const petUsers = onlineUsers.filter(u => activeUsers[u]?.hasPet);
+        res.json({ users: onlineUsers, petUsers });
     } else {
         res.status(400).json({ error: 'Missing username' });
     }
@@ -115,7 +101,8 @@ app.post('/api/heartbeat', async (req, res) => {
 setInterval(async () => {
     const now = Date.now();
     for (const user in activeUsers) {
-        if (now - activeUsers[user] > 30000) {
+        const ts = activeUsers[user]?.ts || 0;
+        if (now - ts > 30000) {
             delete activeUsers[user];
             await sendLog(user, 'offline');
         }
@@ -159,35 +146,43 @@ client.on('messageCreate', async (message) => {
         const args = message.content.split(' ');
         if (args.length < 2) return message.reply('❌ Dùng: `!link [Roblox] [DiscordID]`');
         
-        const rName = args[1].toLowerCase();
-        const dId = args[2] || message.author.id;
+        const waitingMsg = await message.reply('⏳ Đang xử lý...');
         
-        // Update local trước để dùng ngay
-        userMap[rName] = dId;
+        // 1. Đồng bộ mới nhất từ GitHub về trước
+        await fetchUsersFromGithub();
         
-        // Gửi tin nhắn chờ (và giữ lại msg object để edit sau)
-        const waitingMsg = await message.reply(`⏳ Đang lưu **${args[1]}** -> <@${dId}>...`);
+        // 2. Cập nhật local
+        userMap[args[1].toLowerCase()] = args[2] || message.author.id;
         
-        // Update GitHub
+        // 3. Lưu lên GitHub
         const success = await saveUsersToGithub(userMap);
         
-        if (success) {
-            // Sửa lại tin nhắn cũ thành ✅
-            await waitingMsg.edit(`✅ Đã liên kết: **${args[1]}** -> <@${dId}> (Lưu GitHub OK)`);
-        } else {
-            // Sửa lại tin nhắn cũ thành ❌
-            await waitingMsg.edit(`⚠️ Đã liên kết tạm thời (Lưu GitHub thất bại).`);
-        }
+        if (success) await waitingMsg.edit(`✅ Đã link: **${args[1]}**`);
+        else await waitingMsg.edit('❌ Lỗi lưu GitHub.');
     }
     
     if (message.content.startsWith('!unlink')) {
         if (!DEV_IDS.includes(message.author.id)) return message.reply('⛔ Không có quyền.');
+        
         const rName = message.content.split(' ')[1]?.toLowerCase();
+        if (!rName) return message.reply('❌ Thiếu tên Roblox.');
+        
+        const waitingMsg = await message.reply('⏳ Đang xử lý...');
+
+        // 1. Đồng bộ mới nhất từ GitHub về trước
+        await fetchUsersFromGithub();
+
         if (userMap[rName]) {
+            // 2. Xóa local
             delete userMap[rName];
-            await saveUsersToGithub(userMap);
-            message.reply(`🗑️ Đã xóa link: **${rName}**`);
-        } else message.reply('⚠️ Không tìm thấy.');
+            // 3. Lưu lên GitHub
+            const success = await saveUsersToGithub(userMap);
+            
+            if (success) await waitingMsg.edit(`🗑️ Đã xóa link: **${rName}**`);
+            else await waitingMsg.edit('❌ Lỗi lưu GitHub.');
+        } else {
+            await waitingMsg.edit('⚠️ Không tìm thấy tên này.');
+        }
     }
     
     // Lệnh này force update từ GitHub về lại Bot (nếu sửa tay trên web)
